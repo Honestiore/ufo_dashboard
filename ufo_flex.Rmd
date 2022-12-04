@@ -1,0 +1,310 @@
+---
+title: "UFOs in the UK"
+output: 
+  flexdashboard::flex_dashboard:
+    theme:
+      version: 4
+      bg: "white"
+      fg: "#4F556B" 
+      primary: "#4C4C67"
+      navbar-bg: "#4C4C67"
+      base_font: 
+        google: Prompt
+      heading_font:
+        google: Sen
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(shiny)
+library(flexdashboard)
+library(scales)
+library(tidyverse)
+library(leaflet)
+library(plotly)
+library(gt)
+library(gtExtras)
+library(gtable)
+library(tidytext)
+library(textdata)
+library(wordcloud)
+library(patchwork)
+library(ggtext)
+library(fontawesome)
+#load and preprocess data
+data <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-06-25/ufo_sightings.csv")
+
+ufo_palette <- c("#9FEE98", "#92D69D", "#85BDA2", "#7AA99D", "#6E9598", "#628387","#557076", "#515E6F", "#4F556B", "#4C4C67")
+
+ufo_short_palette <- c("#9FEE98", "#7AA99D", "#4C4C67")
+
+ufo_uk <- data %>% filter(country == "gb") %>%
+  mutate(id = 1:nrow(.)) %>%
+  mutate(ufo_shape = factor(ufo_shape))
+
+```
+
+Map of UFOs in the UK
+=======================================================================
+
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Map of UFO encounters
+
+```{r echo=F, message=F,warning=F}
+ufo_shapes <- ufo_uk %>%
+  mutate(ufo_shape = case_when(
+    ufo_shape == "light" ~ "light",
+    ufo_shape == "circle" ~ "circle",
+    TRUE ~ "other"
+  ))
+
+factpal <- colorFactor(ufo_short_palette, ufo_shapes$ufo_shape)
+
+ufo_tomap <- ufo_shapes %>%
+  mutate(city_area = str_remove(city_area, "\\(.+\\)")) %>%
+  group_by(city_area) %>%
+  summarise(mean_enlen = mean(encounter_length, na.rm = T),
+            mean_lat = mean(latitude),
+            mean_lon = mean(longitude)) %>%
+  inner_join(ufo_shapes %>%
+               mutate(city_area = str_remove(city_area, "\\(.+\\)")) %>%
+               group_by(city_area) %>%
+               count(city_area))
+
+ufo_icon <- makeIcon(
+  iconUrl = "ufo_2.png",
+  iconWidth = 20, iconHeight = 20,
+  iconAnchorX = 1, iconAnchorY = 1
+)
+
+leaflet(ufo_tomap) %>% addTiles() %>%
+  addMarkers(~mean_lon, ~mean_lat, icon = ufo_icon,
+             label=~paste0("number of encounters: ",n, '\n; mean length: ', round(mean_enlen/60, 2), ' minutes'))
+
+
+
+```
+
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Explanations
+
+This is a flex dashboard analysing the ufo sightings in the UK in the XX Century.
+The dashboard is divided into 3 parts:
+
+- Map of ufo sightings along with number of encounters and their lengths
+- Analysis of most common places and shapes of ufo sightings
+- Analysis of descriptions of the ufo sightings
+
+The dataset is taken from https://github.com/rfordatascience/tidytuesday/tree/master/data/2019/2019-06-25
+
+### Map interpretation
+
+The map on the left shows the places, 3 most common shapes shapes and lengths
+of encounters in the UK.
+
+- The most common place of UFO encounters is London with over 200 encounters
+- There were far fewer encounters in the north of the UK than south
+
+Places, shapes and time
+=======================================================================
+
+Column {data-width=500}
+-----------------------------------------------------------------------
+
+### Places
+
+
+```{r echo=F, message = F, warning=F}
+# this should have:
+# 10 most common places
+# 
+
+ufo_10_places <- ufo_shapes %>%
+  count(city_area) %>%
+  arrange(desc(n)) %>%
+  top_n(10) %>%
+  mutate(city_area = str_remove(city_area, "\\(.+\\)"))%>%
+  pull(city_area)
+
+ufo_shapes %>%
+  mutate(city_area = str_remove(city_area, "\\(.+\\)"))%>%
+  filter(city_area %in% ufo_10_places) %>%
+  group_by(city_area) %>%
+  count(ufo_shape) %>%
+  arrange(desc(n)) %>%
+  summarise(list_data = list(n)) %>%
+  inner_join(
+    ufo_shapes %>%
+      mutate(city_area = str_remove(city_area, "\\(.+\\)"))%>%
+      filter(city_area %in% ufo_10_places) %>%
+      group_by(city_area) %>%
+      summarise(mean_length = round(mean(encounter_length/60),2))
+  ) %>%
+  gt() %>%
+  gt_plt_bar_stack(column = list_data, palette = ufo_short_palette,labels = c("circle", "light", "other"), position = "stack")
+
+```
+
+
+### Box
+
+```{r echo = F, message = F, warning = F}
+
+year_max <- ufo_shapes %>%
+  mutate(year = as.numeric(str_extract(date_time, '[0-9]{4}'))) %>%
+  count(year) %>%
+  arrange(desc(n)) %>%
+  top_n(1)
+
+
+valueBox(value = year_max$year,
+         caption = paste0("Year with the most UFO encounters. ", year_max$n, " encounters were recorded that year."),
+         icon = "fas fa-user-astronaut",
+         color = "#7AA99D"
+          )
+
+```
+
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Encounters across the years
+
+```{r echo = F, message = F, warning = F}
+
+timeline_plot <- ufo_shapes %>%
+  mutate(year = as.numeric(str_extract(date_time, '[0-9]{4}'))) %>%
+  count(year) %>%
+  ggplot(aes(x = year, y = n, group = 1)) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(1940, 2020, 10)) +
+  theme_classic() +
+  labs(title = "encounters surged in 2000s", x = "year", y = "number of encounters")
+
+ggplotly(timeline_plot, tooltip = c("x", "y"))
+```
+
+### Places in time
+
+```{r echo = F, message = F, warning = F}
+
+places_time_plot <- ufo_shapes %>%
+  mutate(city_area = str_remove(city_area, "\\(.+\\)"))%>%
+  filter(city_area %in% ufo_10_places) %>%
+  mutate(year = as.numeric(str_extract(date_time, '[0-9]{4}'))) %>%
+  group_by(city_area) %>%
+  count(year) %>%
+  mutate(city_area = factor(city_area, ordered = TRUE,
+                                  levels = c("coventry ", "edinburgh ", "leeds ",
+                                             "liverpool ", "birmingham ", "bristol ",
+                                             "manchester ", "nottingham ", "glasgow ",
+                                             "london "))) %>%
+  ggplot(aes(x = year, y = n, fill = city_area)) +
+  geom_col(position = "stack") +
+  scale_x_continuous(breaks = seq(1940, 2020, 10)) +
+  scale_fill_manual(values = ufo_palette) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(x = "year", y = "number of encounters", title = "Encounters in places across XX Century\nHover above the bar to get more information")
+  
+ggplotly(places_time_plot)
+
+```
+
+
+Descriptions
+=======================================================================
+
+Column {data-width=500}
+-----------------------------------------------------------------------
+
+### Wordcloud
+
+100 most common words in the descriptions of the encounters:
+```{r echo =F, warning=F, message=F}
+data_desc <- ufo_uk %>%
+  select(description, id)
+
+
+data_token <- data_desc %>%
+  unnest_tokens(output = "word", input = "description") %>%
+  anti_join(stop_words)
+
+
+
+desc_under_10_words <- data_token %>%
+  count(id) %>%
+  filter(n < 10) %>%
+  pull(id)
+  
+data_token_filtered <- data_token %>%
+  filter(!(id %in% desc_under_10_words))
+
+data_token_countes <- data_token_filtered %>%
+  count(word)
+
+
+wordcloud(data_token_countes$word, data_token_countes$n, color = '#4C4C67',
+          max.words = 100)
+
+```
+
+
+Most common word appearing in the descriptions is 44. Other common words are
+related to collors, lights and shapes of the UFOs.
+The emotions expressed in the descriptions were overally positive
+with high levels of trust and anticipation.
+
+
+Column {data-width=500}
+-----------------------------------------------------------------------
+
+### Emotions
+
+```{r echo=F, message=F, warning=F}
+
+
+
+nrc <- textdata::lexicon_nrc()
+
+data_sent <- data_token_filtered %>%
+  left_join(nrc, by = "word") %>%
+  group_by(id) %>%
+  count(sentiment) %>%
+  mutate(percent = n/sum(n)) %>%
+  drop_na()
+  
+data_sent2 <- data_sent %>%
+  mutate(sentiment = factor(sentiment, ordered = T, levels = c("disgust", "anger", "surprise",
+                                                   "sadness", "joy", "fear",
+                                                   "negative", "trust", "anticipation",
+                                                   "positive")),
+         percent = round(percent,2))
+
+plot_sent <- data_sent2 %>%
+  ggplot(aes(x = sentiment, y = percent, color = sentiment)) +
+  geom_point(position = position_jitter(), aes(text = paste0(
+    "emotion: ", sentiment,
+    "<br>",
+    "percent:", scales::percent(percent)
+  ))) +
+  scale_color_manual(values = ufo_palette) +
+  scale_y_continuous(labels = scales::percent) +
+  coord_flip() +
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(x = "", y = "percentage of text", title = "Most common emotions in descriptions were positive ones")
+
+ggplotly(plot_sent, tooltip = c("text"))
+
+```
+
